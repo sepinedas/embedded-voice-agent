@@ -1,0 +1,19 @@
+[project]
+name = "embedded-voice-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "black>=25.1.0",
+    "flake8>=7.2.0",
+    "langchain-core>=0.3.65",
+    "openai>=1.86.0",
+    "pyaudio>=0.2.14",
+    "python-dotenv>=1.1.0",
+    "textual>=3.3.0",
+    "websockets>=15.0.1",
+]
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
