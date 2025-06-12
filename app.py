@@ -4,9 +4,13 @@ from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 from typing_extensions import override
+from dotenv import load_dotenv
 
 from src.audio import AudioStream, PlayAudio
 from src.langchain_voice_agent import OpenAIVoiceReactAgent
+
+
+load_dotenv()
 
 
 class SessionStatus(Static):
