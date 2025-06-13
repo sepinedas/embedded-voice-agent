@@ -41,7 +41,7 @@ Button {
     margin: 1 1;
 }
 
-#session-status {
+#session-display {
     height: 3;
     content-align: center middle;
     background: #2a2b36;

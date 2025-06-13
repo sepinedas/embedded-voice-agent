@@ -1,24 +1,35 @@
+import asyncio
+
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
+from openai.types.beta.realtime.session import Session
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 from typing_extensions import override
-from dotenv import load_dotenv
+from typing import Any, cast
+import base64
 
-from src.audio import AudioStream, PlayAudio
-from src.langchain_voice_agent import OpenAIVoiceReactAgent
-
+from src.audio import CHANNELS, SAMPLE_RATE, AudioPlayerAsync
 
 load_dotenv()
 
 
-class SessionStatus(Static):
-    session_status = reactive("")
+DEFAULT_URL = "wss://api.openai.com/v1/realtime"
+DEFAULT_MODEL = "gpt-4o-realtime-preview"
+
+
+class SessionDisplay(Static):
+    """A widget that shows the current session ID."""
+
+    session_id = reactive("")
 
     @override
     def render(self) -> str:
-        return "Connected." if self.session_status == "connected" else "Connecting..."
+        return f"Session ID: {self.session_id}" if self.session_id else "Connecting..."
 
 
 class AudioStatusIndicator(Static):
@@ -39,47 +50,153 @@ class AudioStatusIndicator(Static):
 class RealtimeApp(App):
     CSS_PATH = "app.tcss"
 
+    client: AsyncOpenAI
+    last_audio_item_id: str | None
+    connection: AsyncRealtimeConnection | None
+    session: Session | None
+    connected: asyncio.Event
+    should_send_audio: asyncio.Event
+    audio_player: AudioPlayerAsync
+    last_audio_item_id: str | None
+
     def __init__(self) -> None:
         super().__init__()
+        self.client = AsyncOpenAI()
+        self.connected = asyncio.Event()
+        self.should_send_audio = asyncio.Event()
+        self.audio_player = AudioPlayerAsync()
+        self.last_audio_item_id = None
 
     @override
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         with Container():
-            yield SessionStatus(id="session-status")
+            yield SessionDisplay(id="session-display")
             yield AudioStatusIndicator(id="status-indicator")
             yield RichLog(id="bottom-pane", wrap=True, highlight=True, markup=True)
 
     async def on_mount(self) -> None:
-        self.audio_stream = AudioStream()
-        self.run_worker(self.connect())
+        self.run_worker(self.handle_realtime_connection())
+        self.run_worker(self.send_mic_audio())
 
-    async def connect(self) -> None:
-        agent = OpenAIVoiceReactAgent()
+    async def handle_realtime_connection(self) -> None:
+        async with self.client.beta.realtime.connect(model=DEFAULT_MODEL) as conn:
+            self.connection = conn
+            self.connected.set()
 
-        # playAudio = PlayAudio()
-        async def printTest(data):
-            print(data)
+            await conn.session.update(
+                session={"turn_detection": {"type": "server_vad"}}
+            )
 
-        session_display = self.query_one(SessionStatus)
-        session_display.session_status = "connected"
+            acc_items: dict[str, Any] = {}  # noqa: F821
 
-        await agent.aconnect(self.audio_stream.audio_generator(), printTest)
+            async for event in conn:
+                print(event)
+
+                if event.type == "session.created":
+                    self.session = event.session
+                    session_display = self.query_one(SessionDisplay)
+                    assert event.session.id is not None
+                    session_display.session_id = event.session.id
+                    continue
+
+                if event.type == "session.updated":
+                    self.session = event.session
+                    continue
+
+                if event.type == "response.audio.delta":
+                    if event.item_id != self.last_audio_item_id:
+                        self.audio_player.reset_frame_count()
+                        self.last_audio_item_id = event.item_id
+
+                    bytes_data = base64.b64decode(event.delta)
+                    self.audio_player.add_data(bytes_data)
+                    continue
+
+                if event.type == "response.audio_transcript.delta":
+                    try:
+                        text = acc_items[event.item_id]
+                    except KeyError:
+                        acc_items[event.item_id] = event.delta
+                    else:
+                        acc_items[event.item_id] = text + event.delta
+
+                    # Clear and update the entire content because RichLog otherwise treats each delta as a new line
+                    bottom_pane = self.query_one("#bottom-pane", RichLog)
+                    bottom_pane.clear()
+                    bottom_pane.write(acc_items[event.item_id])
+                    continue
+
+    async def _get_connection(self) -> AsyncRealtimeConnection:
+        await self.connected.wait()
+        assert self.connection is not None
+        return self.connection
+
+    async def send_mic_audio(self) -> None:
+        import sounddevice as sd  # type: ignore
+
+        sent_audio = False
+
+        device_info = sd.query_devices()
+        print(device_info)
+
+        read_size = int(SAMPLE_RATE * 0.02)
+
+        stream = sd.InputStream(
+            channels=CHANNELS,
+            samplerate=SAMPLE_RATE,
+            dtype="int16",
+        )
+        stream.start()
+
+        status_indicator = self.query_one(AudioStatusIndicator)
+
+        try:
+            while True:
+                if stream.read_available < read_size:
+                    await asyncio.sleep(0)
+                    continue
+
+                await self.should_send_audio.wait()
+                status_indicator.is_recording = True
+
+                data, _ = stream.read(read_size)
+
+                connection = await self._get_connection()
+                if not sent_audio:
+                    asyncio.create_task(connection.send({"type": "response.cancel"}))
+                    sent_audio = True
+
+                await connection.input_audio_buffer.append(audio=base64.b64encode(cast(Any, data)).decode("utf-8"))
+                
+
+                await asyncio.sleep(0)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stream.stop()
+            stream.close()
 
     async def on_key(self, event: events.Key) -> None:
         if event.key == "q":
             self.exit()
             return
 
-        status_indicator = self.query_one(AudioStatusIndicator)
         if event.key == "k":
+            status_indicator = self.query_one(AudioStatusIndicator)
             if status_indicator.is_recording:
+                self.should_send_audio.clear()
                 status_indicator.is_recording = False
 
-                self.audio_stream.pause()
+                if self.session and self.session.turn_detection is None:
+                    conn = await self._get_connection()
+                    await conn.input_audio_buffer.commit()
+                    await conn.response.create()
+
             else:
                 status_indicator.is_recording = True
-                self.audio_stream.resume()
+                self.should_send_audio.set()
+
 
 
 if __name__ == "__main__":
