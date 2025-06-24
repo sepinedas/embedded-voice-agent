@@ -2,9 +2,7 @@ import threading
 import sounddevice as sd
 import numpy as np
 
-CHANNELS = 1
-SAMPLE_RATE = 24000
-CHUNK_LENGTH_S = 0.05  # 100ms
+from common.audio import CHANNELS, SAMPLE_RATE, CHUNK_LENGTH_S
 
 
 class AudioPlayerAsync:
@@ -37,7 +35,9 @@ class AudioPlayerAsync:
 
             # fill the rest of the frames with zeros if there is no more data
             if len(data) < frames:
-                data = np.concatenate((data, np.zeros(frames - len(data), dtype=np.int16)))
+                data = np.concatenate(
+                    (data, np.zeros(frames - len(data), dtype=np.int16))
+                )
 
         outdata[:] = data.reshape(-1, 1)
 
