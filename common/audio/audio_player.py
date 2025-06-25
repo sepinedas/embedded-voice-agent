@@ -2,7 +2,7 @@ import threading
 import sounddevice as sd
 import numpy as np
 
-from common.audio import CHANNELS, SAMPLE_RATE, CHUNK_LENGTH_S
+from common.audio import CHANNELS, CHUNK, SAMPLE_RATE
 
 
 class AudioPlayerAsync:
@@ -14,7 +14,7 @@ class AudioPlayerAsync:
             samplerate=SAMPLE_RATE,
             channels=CHANNELS,
             dtype=np.int16,
-            blocksize=int(CHUNK_LENGTH_S * SAMPLE_RATE),
+            blocksize=CHUNK,
         )
         self.playing = False
         self._frame_count = 0

@@ -12,6 +12,7 @@ dependencies = [
 	"langchain-core>=0.3.65",
 	"numpy>=2.3.0",
 	"openai>=1.86.0",
+	"openwakeword>=0.4.0",
 	"python-dotenv>=1.1.0",
 	"ruff>=0.11.13",
 	"sounddevice>=0.5.2",

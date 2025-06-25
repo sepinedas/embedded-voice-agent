@@ -1,17 +1,21 @@
 import asyncio
+import base64
+from threading import Timer
+from typing import Any, cast
+import numpy as np
 
+import openwakeword
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 from openai.types.beta.realtime.session import Session
+from openwakeword.model import Model
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 from typing_extensions import override
-from typing import Any, cast
-import base64
 
 from common.audio.audio_player import AudioPlayerAsync
 from common.audio.audio_recorder import audio_input_generator
@@ -79,6 +83,7 @@ class RealtimeApp(App):
     async def on_mount(self) -> None:
         self.run_worker(self.handle_realtime_connection())
         self.run_worker(self.send_mic_audio())
+        self.run_worker(self.send_wake_word())
 
     async def handle_realtime_connection(self) -> None:
         async with self.client.beta.realtime.connect(model=DEFAULT_MODEL) as conn:
@@ -152,6 +157,40 @@ class RealtimeApp(App):
         except KeyboardInterrupt:
             pass
 
+    async def send_wake_word(self) -> None:
+        model = Model()
+        n_models = len(model.models.keys())
+        status_indicator = self.query_one(AudioStatusIndicator)
+
+        try:
+            async for audio_block in audio_input_generator(samplerate=16000):
+                audio = np.frombuffer(audio_block, dtype=np.int16)
+                prediction = model.predict(audio)
+
+                for mdl in model.prediction_buffer.keys():
+                    if mdl == "hey_jarvis":
+                        scores = list(model.prediction_buffer[mdl])
+                        if scores[-1] > 0.5 and not status_indicator.is_recording:
+                            self.enable_audio()
+                            self.reset_should_send_audio()
+
+        except KeyboardInterrupt:
+            pass
+
+    def disable_audio(self):
+        status_indicator = self.query_one(AudioStatusIndicator)
+        self.should_send_audio.clear()
+        status_indicator.is_recording = False
+
+    def enable_audio(self):
+        status_indicator = self.query_one(AudioStatusIndicator)
+        self.should_send_audio.set()
+        status_indicator.is_recording = True
+
+    def reset_should_send_audio(self, delay=3):
+        t = Timer(delay, self.disable_audio)
+        t.start()
+
     async def on_key(self, event: events.Key) -> None:
         if event.key == "q":
             self.exit()
@@ -160,17 +199,14 @@ class RealtimeApp(App):
         if event.key == "k":
             status_indicator = self.query_one(AudioStatusIndicator)
             if status_indicator.is_recording:
-                self.should_send_audio.clear()
-                status_indicator.is_recording = False
+                self.disable_audio()
 
                 if self.session and self.session.turn_detection is None:
                     conn = await self._get_connection()
                     await conn.input_audio_buffer.commit()
                     await conn.response.create()
-
             else:
-                status_indicator.is_recording = True
-                self.should_send_audio.set()
+                self.enable_audio()
 
 
 if __name__ == "__main__":
