@@ -4,7 +4,6 @@ from threading import Timer
 from typing import Any, cast
 import numpy as np
 
-import openwakeword
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
@@ -159,13 +158,12 @@ class RealtimeApp(App):
 
     async def send_wake_word(self) -> None:
         model = Model()
-        n_models = len(model.models.keys())
         status_indicator = self.query_one(AudioStatusIndicator)
 
         try:
             async for audio_block in audio_input_generator(samplerate=16000):
                 audio = np.frombuffer(audio_block, dtype=np.int16)
-                prediction = model.predict(audio)
+                model.predict(audio)
 
                 for mdl in model.prediction_buffer.keys():
                     if mdl == "hey_jarvis":
