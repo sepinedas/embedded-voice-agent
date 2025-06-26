@@ -9,6 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+	"gpiozero>=2.0.1",
 	"langchain-core>=0.3.65",
 	"numpy>=2.3.0",
 	"openai>=1.86.0",
@@ -20,3 +21,6 @@ dependencies = [
 	"textual-dev>=1.7.0",
 	"websockets>=15.0.1",
 ]
+
+[tool.setuptools]
+py-modules = ["common", "raspberry"]

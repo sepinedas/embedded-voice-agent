@@ -1,21 +1,24 @@
 import asyncio
+import base64
 from threading import Timer
+from typing import Any, cast
+from gpiozero import LED
+
 import numpy as np
 from dotenv import load_dotenv
-from openwakeword.model import Model
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
-from typing import Any, cast
-import base64
+from openwakeword.model import Model
 
 from common.audio.audio_player import AudioPlayerAsync
 from common.audio.audio_recorder import audio_input_generator
 
 load_dotenv()
-
+led = LED("GPIO04")
 
 DEFAULT_URL = "wss://api.openai.com/v1/realtime"
 DEFAULT_MODEL = "gpt-4o-realtime-preview"
+VOICE = "ash"
 
 
 class RealtimeApp:
@@ -48,6 +51,10 @@ class RealtimeApp:
             self.connection = conn
             self.connected.set()
 
+            await conn.session.update(
+                session={"turn_detection": {"type": "server_vad"}, "voice": VOICE}
+            )
+
             acc_items: dict[str, Any] = {}  # noqa: F821
 
             async for event in conn:
@@ -73,14 +80,16 @@ class RealtimeApp:
     def disable_audio(self):
         self.should_send_audio.clear()
         self.is_recording = False
+        led.off()
         print("audio disabled")
 
     def enable_audio(self):
         self.should_send_audio.set()
         self.is_recording = True
+        led.on()
         print("audio enabled")
 
-    def reset_audio_enabled(self, delay=15):
+    def reset_audio_enabled(self, delay=10):
         t = Timer(delay, self.disable_audio)
         t.start()
 
