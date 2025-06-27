@@ -9,16 +9,19 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.resources.beta.realtime.realtime import AsyncRealtimeConnection
 from openwakeword.model import Model
-
+import openwakeword
 from common.audio.audio_player import AudioPlayerAsync
 from common.audio.audio_recorder import audio_input_generator
 
 load_dotenv()
-led = LED("GPIO04")
+led = LED(17)
 
 DEFAULT_URL = "wss://api.openai.com/v1/realtime"
 DEFAULT_MODEL = "gpt-4o-realtime-preview"
 VOICE = "ash"
+
+
+# openwakeword.utils.download_models()
 
 
 class RealtimeApp:
@@ -104,7 +107,7 @@ class RealtimeApp:
                 for mdl in model.prediction_buffer.keys():
                     if mdl == "hey_jarvis":
                         scores = list(model.prediction_buffer[mdl])
-                        if scores[-1] > 0.5 and not self.is_recording:
+                        if scores[-1] > 0.4 and not self.is_recording:
                             self.enable_audio()
                             self.reset_audio_enabled()
 
