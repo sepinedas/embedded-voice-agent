@@ -3,6 +3,7 @@ import numpy as np
 import base64
 from threading import Timer
 from typing import Any, cast
+from common.audio import SAMPLE_RATE_PLAY
 from gpiozero import LED
 
 from dotenv import load_dotenv
@@ -24,7 +25,8 @@ class RealtimeApp:
     client: AsyncOpenAI
     connection: AsyncRealtimeConnection | None
     connected: asyncio.Event
-    should_send_audio: bool
+    should_send_audio: asyncio.Event
+    should_listen_wake_word: asyncio.Event
     audio_player: AudioPlayerAsync
     last_audio_item_id: str | None
     is_recording: bool
@@ -32,7 +34,8 @@ class RealtimeApp:
     def __init__(self) -> None:
         self.client = AsyncOpenAI()
         self.connected = asyncio.Event()
-        self.should_send_audio = False
+        self.should_send_audio = asyncio.Event()
+        self.should_listen_wake_word = asyncio.Event()
         self.audio_player = AudioPlayerAsync()
         self.last_audio_item_id = None
         self.is_recording = False
@@ -42,6 +45,7 @@ class RealtimeApp:
         await asyncio.gather(
             self.handle_realtime_connection(),
             self.send_mic_audio(),
+            self.listen_wake_word(),
         )
 
     async def handle_realtime_connection(self) -> None:
@@ -76,13 +80,15 @@ class RealtimeApp:
                     continue
 
     def disable_audio(self):
-        self.should_send_audio = False
+        self.should_send_audio.clear()
         self.is_recording = False
+        self.should_listen_wake_word.set()
         led.off()
         print("audio disabled")
 
     def enable_audio(self):
-        self.should_send_audio = True
+        self.should_send_audio.set()
+        self.should_listen_wake_word.clear()
         self.is_recording = True
         led.on()
         print("audio enabled")
@@ -96,32 +102,37 @@ class RealtimeApp:
         assert self.connection is not None
         return self.connection
 
-    async def send_mic_audio(self) -> None:
-        sent_audio = False
+    async def listen_wake_word(self) -> None:
         model = Model()
         try:
             async for audio_block in audio_input_generator():
-                if not self.should_send_audio:
-                    audio = np.frombuffer(audio_block, dtype=np.int16)
-                    model.predict(audio)
+                await self.should_listen_wake_word.wait()
+                audio = np.frombuffer(audio_block, dtype=np.int16)
+                model.predict(audio)
 
-                    for mdl in model.prediction_buffer.keys():
-                        if mdl == "hey_jarvis":
-                            scores = list(model.prediction_buffer[mdl])
-                            if scores[-1] > 0.5 and not self.is_recording:
-                                self.enable_audio()
-                                self.reset_audio_enabled()
-                else:
-                    connection = await self._get_connection()
-                    if not sent_audio:
-                        asyncio.create_task(
-                            connection.send({"type": "response.cancel"})
-                        )
-                        sent_audio = True
+                for mdl in model.prediction_buffer.keys():
+                    if mdl == "hey_jarvis":
+                        scores = list(model.prediction_buffer[mdl])
+                        if scores[-1] > 0.5 and not self.is_recording:
+                            self.enable_audio()
+                            self.reset_audio_enabled()
+        except KeyboardInterrupt:
+            pass
 
-                    await connection.input_audio_buffer.append(
-                        audio=base64.b64encode(cast(Any, audio_block)).decode("utf-8")
-                    )
+    async def send_mic_audio(self) -> None:
+        try:
+            sent_audio = False
+
+            async for audio_block in audio_input_generator(samplerate=SAMPLE_RATE_PLAY):
+                await self.should_send_audio.wait()
+                connection = await self._get_connection()
+                if not sent_audio:
+                    asyncio.create_task(connection.send({"type": "response.cancel"}))
+                    sent_audio = True
+
+                await connection.input_audio_buffer.append(
+                    audio=base64.b64encode(cast(Any, audio_block)).decode("utf-8")
+                )
 
         except KeyboardInterrupt:
             pass
