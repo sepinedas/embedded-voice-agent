@@ -213,9 +213,9 @@ name = "embedded-voice-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "gpiozero" },
+    { name = "gpiozero", marker = "platform_machine == 'armv7l'" },
     { name = "langchain-core" },
-    { name = "lgpio" },
+    { name = "lgpio", marker = "platform_machine == 'armv7l'" },
     { name = "numpy" },
     { name = "openai" },
     { name = "openwakeword" },
@@ -230,9 +230,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gpiozero", specifier = ">=2.0.1" },
+    { name = "gpiozero", marker = "platform_machine == 'armv7l'", specifier = ">=2.0.1" },
     { name = "langchain-core", specifier = ">=0.3.65" },
-    { name = "lgpio", specifier = ">=0.2.2.0" },
+    { name = "lgpio", marker = "platform_machine == 'armv7l'", specifier = ">=0.2.2.0" },
     { name = "numpy", specifier = ">=2.3.0" },
     { name = "openai", specifier = ">=1.86.0" },
     { name = "openwakeword", specifier = ">=0.4.0" },

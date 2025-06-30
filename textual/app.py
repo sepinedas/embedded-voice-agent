@@ -59,7 +59,7 @@ class RealtimeApp(App):
     connection: AsyncRealtimeConnection | None
     session: Session | None
     connected: asyncio.Event
-    should_send_audio: asyncio.Event
+    should_send_audio: bool
     audio_player: AudioPlayerAsync
     last_audio_item_id: str | None
 
@@ -67,7 +67,7 @@ class RealtimeApp(App):
         super().__init__()
         self.client = AsyncOpenAI()
         self.connected = asyncio.Event()
-        self.should_send_audio = asyncio.Event()
+        self.should_send_audio = False
         self.audio_player = AudioPlayerAsync()
         self.last_audio_item_id = None
 
@@ -82,7 +82,6 @@ class RealtimeApp(App):
     async def on_mount(self) -> None:
         self.run_worker(self.handle_realtime_connection())
         self.run_worker(self.send_mic_audio())
-        self.run_worker(self.send_wake_word())
 
     async def handle_realtime_connection(self) -> None:
         async with self.client.beta.realtime.connect(model=DEFAULT_MODEL) as conn:
@@ -140,49 +139,42 @@ class RealtimeApp(App):
     async def send_mic_audio(self) -> None:
         status_indicator = self.query_one(AudioStatusIndicator)
         sent_audio = False
+        model = Model()
         try:
             async for audio_block in audio_input_generator():
-                await self.should_send_audio.wait()
-                status_indicator.is_recording = True
-                connection = await self._get_connection()
-                if not sent_audio:
-                    asyncio.create_task(connection.send({"type": "response.cancel"}))
-                    sent_audio = True
+                if not self.should_send_audio:
+                    audio = np.frombuffer(audio_block, dtype=np.int16)
+                    model.predict(audio)
 
-                await connection.input_audio_buffer.append(
-                    audio=base64.b64encode(cast(Any, audio_block)).decode("utf-8")
-                )
+                    for mdl in model.prediction_buffer.keys():
+                        if mdl == "hey_jarvis":
+                            scores = list(model.prediction_buffer[mdl])
+                            if scores[-1] > 0.5 and not status_indicator.is_recording:
+                                self.enable_audio()
+                                self.reset_should_send_audio()
+                else:
+                    connection = await self._get_connection()
+                    if not sent_audio:
+                        asyncio.create_task(
+                            connection.send({"type": "response.cancel"})
+                        )
+                        sent_audio = True
 
-        except KeyboardInterrupt:
-            pass
-
-    async def send_wake_word(self) -> None:
-        model = Model()
-        status_indicator = self.query_one(AudioStatusIndicator)
-
-        try:
-            async for audio_block in audio_input_generator(samplerate=16000):
-                audio = np.frombuffer(audio_block, dtype=np.int16)
-                model.predict(audio)
-
-                for mdl in model.prediction_buffer.keys():
-                    if mdl == "hey_jarvis":
-                        scores = list(model.prediction_buffer[mdl])
-                        if scores[-1] > 0.5 and not status_indicator.is_recording:
-                            self.enable_audio()
-                            self.reset_should_send_audio()
+                    await connection.input_audio_buffer.append(
+                        audio=base64.b64encode(cast(Any, audio_block)).decode("utf-8")
+                    )
 
         except KeyboardInterrupt:
             pass
 
     def disable_audio(self):
         status_indicator = self.query_one(AudioStatusIndicator)
-        self.should_send_audio.clear()
+        self.should_send_audio = False
         status_indicator.is_recording = False
 
     def enable_audio(self):
         status_indicator = self.query_one(AudioStatusIndicator)
-        self.should_send_audio.set()
+        self.should_send_audio = True
         status_indicator.is_recording = True
 
     def reset_should_send_audio(self, delay=3):
