@@ -1,29 +1,31 @@
-import pyaudio
 import asyncio
-from common.audio import CHANNELS, SAMPLE_RATE_REC, CHUNK
+from common.audio import CHANNELS, CHUNK_LENGTH_S, SAMPLE_RATE
+import sounddevice as sd
 
 
 async def audio_input_generator(
-    channels=CHANNELS, samplerate=SAMPLE_RATE_REC, chunk=CHUNK
+    channels=CHANNELS, samplerate=SAMPLE_RATE, chunk_length_s=CHUNK_LENGTH_S
 ):
-    p = pyaudio.PyAudio()
-    stream = p.open(
-        format=pyaudio.paInt16,
+    read_size = int(chunk_length_s * samplerate)
+    stream = sd.InputStream(
         channels=channels,
-        rate=samplerate,
-        input=True,
-        frames_per_buffer=chunk,
+        samplerate=samplerate,
+        dtype="int16",
     )
+    stream.start()
 
     try:
         while True:
-            data = stream.read(chunk)
+            if stream.read_available < read_size:
+                await asyncio.sleep(0)
+                continue
+
+            data, _ = stream.read(read_size)
             yield data
-            await asyncio.sleep(0)  # Allow other tasks to run
+            await asyncio.sleep(0)
 
     except Exception as e:
         print(f"Error in audio input stream: {e}")
     finally:
-        stream.stop_stream()
+        stream.stop()
         stream.close()
-        p.terminate()
