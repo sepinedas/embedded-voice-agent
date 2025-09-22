@@ -7,11 +7,7 @@ async def audio_input_generator(
     channels=CHANNELS, samplerate=SAMPLE_RATE, chunk_length_s=CHUNK_LENGTH_S
 ):
     read_size = int(chunk_length_s * samplerate)
-    stream = sd.InputStream(
-        channels=channels,
-        samplerate=samplerate,
-        dtype="int16",
-    )
+    stream = sd.InputStream(channels=channels, samplerate=samplerate, dtype="int16")
     stream.start()
 
     try:
