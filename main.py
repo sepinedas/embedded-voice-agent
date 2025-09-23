@@ -78,14 +78,11 @@ class RealtimeApp:
                     self.audio_player.add_data(bytes_data)
 
                     if self.is_awake:
-                        self.disable_audio()
+                        self.sleep_mic()
                     continue
 
                 if event.type == "response.done":
-                    while self.audio_player.queue:
-                        await asyncio.sleep(0)
-                    self.reset_audio_disabled()
-                    self.reset_audio_enabled()
+                    asyncio.create_task(self.awake_mic_after_response_done())
                     continue
 
                 if event.type == "response.output_audio_transcript.delta":
@@ -95,28 +92,33 @@ class RealtimeApp:
                         acc_items[event.item_id] = event.delta
                     else:
                         acc_items[event.item_id] = text + event.delta
-
                     continue
 
-    def disable_audio(self):
+    async def awake_mic_after_response_done(self):
+        while self.audio_player.queue:
+            await asyncio.sleep(0)
+        self.schedule_awake_mic()
+        self.schedule_sleep_mic()
+
+    def sleep_mic(self):
         self.is_awake = False
         wake.off()
         print("audio disabled")
 
-    def enable_audio(self):
+    def awake_mic(self):
         self.is_awake = True
         wake.on()
         print("audio enabled")
 
-    def reset_audio_enabled(self, delay=30):
+    def schedule_sleep_mic(self, delay=30):
         if self.activity_timer and self.activity_timer.is_alive:
             self.activity_timer.cancel()
 
-        self.activity_timer = Timer(delay, self.disable_audio)
+        self.activity_timer = Timer(delay, self.sleep_mic)
         self.activity_timer.start()
 
-    def reset_audio_disabled(self, delay=3):
-        t = Timer(delay, self.enable_audio)
+    def schedule_awake_mic(self, delay=1):
+        t = Timer(delay, self.awake_mic)
         t.start()
 
     async def _get_connection(self) -> AsyncRealtimeConnection:
@@ -155,8 +157,7 @@ class RealtimeApp:
                     if mdl == "alexa":
                         scores = list(model.prediction_buffer[mdl])
                         if scores[-1] > 0.5:
-                            self.enable_audio()
-                            self.reset_audio_enabled()
+                            self.awake_mic()
                 await asyncio.sleep(0)
 
 
