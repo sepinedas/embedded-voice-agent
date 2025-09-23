@@ -31,6 +31,7 @@ class RealtimeApp:
     audio_player: AudioPlayerAsync
     last_audio_item_id: str | None
     is_awake: bool
+    activity_timer: Timer
 
     def __init__(self) -> None:
         self.client = AsyncOpenAI()
@@ -38,11 +39,11 @@ class RealtimeApp:
         self.audio_player = AudioPlayerAsync()
         self.last_audio_item_id = None
         self.is_awake = False
+        self.activity_timer = None
 
     async def run(self):
         print("running")
         print(sd.query_devices())
-        self.enable_audio()
         await asyncio.gather(
             self.handle_realtime_connection(),
             self.send_mic_audio(),
@@ -68,7 +69,6 @@ class RealtimeApp:
             acc_items: dict[str, Any] = {}  # noqa: F821
 
             async for event in conn:
-                print(event.type)
                 if event.type == "response.output_audio.delta":
                     if event.item_id != self.last_audio_item_id:
                         self.audio_player.reset_frame_count()
@@ -77,7 +77,8 @@ class RealtimeApp:
                     bytes_data = base64.b64decode(event.delta)
                     self.audio_player.add_data(bytes_data)
 
-                    self.disable_audio()
+                    if self.is_awake:
+                        self.disable_audio()
                     continue
 
                 if event.type == "response.done":
@@ -108,10 +109,13 @@ class RealtimeApp:
         print("audio enabled")
 
     def reset_audio_enabled(self, delay=30):
-        t = Timer(delay, self.disable_audio)
-        t.start()
+        if self.activity_timer and self.activity_timer.is_alive:
+            self.activity_timer.cancel()
 
-    def reset_audio_disabled(self, delay=2):
+        self.activity_timer = Timer(delay, self.disable_audio)
+        self.activity_timer.start()
+
+    def reset_audio_disabled(self, delay=3):
         t = Timer(delay, self.enable_audio)
         t.start()
 
