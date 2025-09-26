@@ -1,7 +1,7 @@
 import asyncio
 import base64
 from threading import Timer
-from typing import Any, cast
+from typing import Any, Optional, cast
 import numpy as np
 import sounddevice as sd
 from scipy.signal import resample
@@ -31,7 +31,8 @@ class RealtimeApp:
     audio_player: AudioPlayerAsync
     last_audio_item_id: str | None
     is_awake: bool
-    activity_timer: Timer
+    activity_timer: Optional[Timer]
+    lock: asyncio.Lock
 
     def __init__(self) -> None:
         self.client = AsyncOpenAI()
@@ -40,13 +41,13 @@ class RealtimeApp:
         self.last_audio_item_id = None
         self.is_awake = False
         self.activity_timer = None
+        self.lock = asyncio.Lock()
 
     async def run(self):
         print("running")
         print(sd.query_devices())
         await asyncio.gather(
-            self.handle_realtime_connection(),
-            self.send_mic_audio(),
+            self.handle_realtime_connection(), self.send_mic_audio(), self.auto_sleep()
         )
 
     async def handle_realtime_connection(self) -> None:
@@ -78,7 +79,7 @@ class RealtimeApp:
                     self.audio_player.add_data(bytes_data)
 
                     if self.is_awake:
-                        self.sleep_mic()
+                        await self.sleep_mic()
                     continue
 
                 if event.type == "response.done":
@@ -95,31 +96,27 @@ class RealtimeApp:
                     continue
 
     async def awake_mic_after_response_done(self):
-        while self.audio_player.queue:
-            await asyncio.sleep(0)
-        self.schedule_awake_mic()
-        self.schedule_sleep_mic()
+        async with self.lock:
+            while self.audio_player.queue:
+                await asyncio.sleep(0)
+        await self.awake_mic()
 
-    def sleep_mic(self):
-        self.is_awake = False
-        wake.off()
-        print("audio disabled")
+    async def sleep_mic(self):
+        async with self.lock:
+            self.is_awake = False
+            wake.off()
+            print("audio disabled")
 
-    def awake_mic(self):
-        self.is_awake = True
-        wake.on()
-        print("audio enabled")
+    async def awake_mic(self):
+        async with self.lock:
+            self.is_awake = True
+            wake.on()
+            print("audio enabled")
 
-    def schedule_sleep_mic(self, delay=30):
-        if self.activity_timer and self.activity_timer.is_alive:
-            self.activity_timer.cancel()
-
-        self.activity_timer = Timer(delay, self.sleep_mic)
-        self.activity_timer.start()
-
-    def schedule_awake_mic(self, delay=1):
-        t = Timer(delay, self.awake_mic)
-        t.start()
+    async def auto_sleep(self, delay=60):
+        while True:
+            await asyncio.sleep(delay)
+            await self.sleep_mic()
 
     async def _get_connection(self) -> AsyncRealtimeConnection:
         await self.connected.wait()
@@ -157,7 +154,7 @@ class RealtimeApp:
                     if mdl == "alexa":
                         scores = list(model.prediction_buffer[mdl])
                         if scores[-1] > 0.5:
-                            self.awake_mic()
+                            await self.awake_mic()
                 await asyncio.sleep(0)
 
 
