@@ -2,16 +2,13 @@ import asyncio
 import base64
 from threading import Timer
 from typing import Any, Optional, cast
-import numpy as np
 import sounddevice as sd
-from scipy.signal import resample
 
 from gpiozero import LED
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
-from openwakeword.model import Model
 from common.audio.audio_player import AudioPlayerAsync
 
 from common.audio.audio_recorder import audio_input_generator
@@ -46,9 +43,8 @@ class RealtimeApp:
     async def run(self):
         print("running")
         print(sd.query_devices())
-        await asyncio.gather(
-            self.handle_realtime_connection(), self.send_mic_audio(), self.auto_sleep()
-        )
+        await self.awake_mic()
+        await asyncio.gather(self.handle_realtime_connection(), self.send_mic_audio())
 
     async def handle_realtime_connection(self) -> None:
         async with self.client.realtime.connect(model=DEFAULT_MODEL) as conn:
@@ -113,11 +109,6 @@ class RealtimeApp:
             wake.on()
             print("audio enabled")
 
-    async def auto_sleep(self, delay=60):
-        while True:
-            await asyncio.sleep(delay)
-            await self.sleep_mic()
-
     async def _get_connection(self) -> AsyncRealtimeConnection:
         await self.connected.wait()
         assert self.connection is not None
@@ -125,9 +116,6 @@ class RealtimeApp:
 
     async def send_mic_audio(self) -> None:
         sent_audio = False
-        model = Model()
-        target_sample_rate = 16000
-        original_sample_rate = 24000
 
         async for data in audio_input_generator():
             if self.is_awake:
@@ -139,22 +127,6 @@ class RealtimeApp:
                 await connection.input_audio_buffer.append(
                     audio=base64.b64encode(cast(Any, data)).decode("utf-8")
                 )
-                await asyncio.sleep(0)
-            else:
-                audio = np.frombuffer(data, dtype=np.int16)
-                num_samples_original = len(audio)
-                num_samples_downsampled = int(
-                    num_samples_original * (target_sample_rate / original_sample_rate)
-                )
-                downsampled_audio = resample(audio, num_samples_downsampled)
-
-                model.predict(downsampled_audio)
-
-                for mdl in model.prediction_buffer.keys():
-                    if mdl == "alexa":
-                        scores = list(model.prediction_buffer[mdl])
-                        if scores[-1] > 0.5:
-                            await self.awake_mic()
                 await asyncio.sleep(0)
 
 
