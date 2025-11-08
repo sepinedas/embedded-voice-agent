@@ -4,7 +4,7 @@ from threading import Timer
 from typing import Any, Optional, cast
 import sounddevice as sd
 
-from gpiozero import LED
+from gpiozero import LED, InputDevice
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -16,6 +16,7 @@ from common.audio.audio_recorder import audio_input_generator
 load_dotenv()
 connected_led = LED(27)
 wake = LED(17)
+input_pin = InputDevice(15, pull_up=False)
 
 DEFAULT_MODEL = "gpt-realtime"
 VOICE = "coral"
@@ -28,6 +29,7 @@ class RealtimeApp:
     audio_player: AudioPlayerAsync
     last_audio_item_id: str | None
     is_awake: bool
+    is_receiving: bool
     activity_timer: Optional[Timer]
     lock: asyncio.Lock
 
@@ -37,14 +39,28 @@ class RealtimeApp:
         self.audio_player = AudioPlayerAsync()
         self.last_audio_item_id = None
         self.is_awake = False
+        self.is_receiving = False
         self.activity_timer = None
         self.lock = asyncio.Lock()
 
     async def run(self):
         print("running")
         print(sd.query_devices())
+
         await self.awake_mic()
-        await asyncio.gather(self.handle_realtime_connection(), self.send_mic_audio())
+        await asyncio.gather(
+            self.handle_realtime_connection(),
+            self.send_mic_audio(),
+            self.handle_button(),
+        )
+
+    async def handle_button(self):
+        while True:
+            if input_pin.is_active and not self.is_receiving:
+                await self.awake_mic()
+            else:
+                await self.sleep_mic()
+            await asyncio.sleep(0)
 
     async def handle_realtime_connection(self) -> None:
         async with self.client.realtime.connect(model=DEFAULT_MODEL) as conn:
@@ -76,6 +92,9 @@ class RealtimeApp:
 
                     if self.is_awake:
                         await self.sleep_mic()
+
+                    async with self.lock:
+                        self.is_receiving = True
                     continue
 
                 if event.type == "response.done":
@@ -95,19 +114,19 @@ class RealtimeApp:
         async with self.lock:
             while self.audio_player.queue:
                 await asyncio.sleep(0)
+            self.is_receiving = False
+        await asyncio.sleep(100)
         await self.awake_mic()
 
     async def sleep_mic(self):
         async with self.lock:
             self.is_awake = False
             wake.off()
-            print("audio disabled")
 
     async def awake_mic(self):
         async with self.lock:
             self.is_awake = True
             wake.on()
-            print("audio enabled")
 
     async def _get_connection(self) -> AsyncRealtimeConnection:
         await self.connected.wait()
